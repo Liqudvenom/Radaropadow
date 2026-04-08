@@ -1,0 +1,21 @@
+# Python
+.env
+*.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Node.js
+node_modules/
+dist/
+.vite/
+
+# Tekstury / duże pliki
+frontend/public/*.jpg
+frontend/public/*.png
+
+# System
+.DS_Store
+Thumbs.db
