@@ -1,4 +1,4 @@
-# Storm Intelligence — Real-Time Global Storm Tracker
+# Radaropadow — Real-Time Global Storm Tracker
 
 A full-stack weather intelligence system with 3D globe visualization, real-time storm detection, and 24-hour historical playback.
 
