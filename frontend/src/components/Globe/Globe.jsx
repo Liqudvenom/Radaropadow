@@ -1,19 +1,32 @@
-import { useRef, useMemo, useEffect } from 'react'
-import { useFrame, useLoader } from '@react-three/fiber'
-import { TextureLoader, ShaderMaterial, AdditiveBlending, DataTexture, RGBAFormat, FloatType } from 'three'
+/**
+ * Globe — top-level Earth renderer.
+ *
+ * Delegates the actual sphere render to one of two layers:
+ *   - RealisticEarth (photo, day/night, clouds)
+ *   - LineEarth      (blueprint contours)
+ *
+ * Both are mounted simultaneously and cross-faded via opacity refs
+ * driven by `store.earthMode`. The fade runs on useFrame so it doesn't
+ * trigger React re-renders during the transition.
+ */
+import { useRef, useMemo, useEffect, Suspense } from 'react'
+import { useFrame } from '@react-three/fiber'
+import { ShaderMaterial, AdditiveBlending, DataTexture, RGBAFormat, FloatType } from 'three'
 import * as THREE from 'three'
 import { atmosphereFragmentShader, atmosphereVertexShader } from './AtmosphereShader'
 import { heatmapFragmentShader, heatmapVertexShader } from './HeatmapShader'
-import { latLonToVec3 } from '../../utils/geoUtils'
 import RainRadarLayer from './RainRadarLayer'
+import RealisticEarth from './RealisticEarth'
+import LineEarth from './LineEarth'
+import useStormStore from '../../store'
 
-const EARTH_TEXTURE = '/R_earth_viirs_1080p.00001_print.jpg'
 const HEATMAP_W = 256
 const HEATMAP_H = 128
+const FADE_DURATION = 0.6
 
 function buildHeatmapTexture(storms) {
   const data = new Float32Array(HEATMAP_W * HEATMAP_H * 4)
-  const sigma = 24  // soft, wide plumes
+  const sigma = 24
 
   for (const storm of storms) {
     const u = ((storm.coordinates.lon + 180) / 360) * HEATMAP_W
@@ -45,12 +58,15 @@ export default function Globe({
   showRainRadar = false,
   autoRotate = true,
 }) {
-  const earthRef = useRef()
   const atmosphereRef = useRef()
   const heatmapRef = useRef()
   const rotationRef = useRef(0)
 
-  const earthTexture = useLoader(TextureLoader, EARTH_TEXTURE)
+  // Per-mode opacity refs, mutated each frame (no React rerender).
+  const realisticOpacityRef = useRef(1.0)
+  const lineOpacityRef = useRef(0.0)
+
+  const earthMode = useStormStore((s) => s.earthMode)
 
   const atmosphereMaterial = useMemo(
     () =>
@@ -66,7 +82,7 @@ export default function Globe({
         transparent: true,
         depthWrite: false,
       }),
-    []
+    [],
   )
 
   const heatmapTexture = useMemo(() => buildHeatmapTexture(storms), [storms])
@@ -84,50 +100,54 @@ export default function Globe({
         depthWrite: false,
         side: THREE.FrontSide,
       }),
-    [heatmapTexture, showHeatmap]
+    [],
   )
 
-  // Update heatmap when storms change
   useEffect(() => {
     if (heatmapRef.current) {
-      const newTex = buildHeatmapTexture(storms)
-      heatmapRef.current.material.uniforms.uHeatmapData.value = newTex
+      heatmapRef.current.material.uniforms.uHeatmapData.value = heatmapTexture
       heatmapRef.current.material.uniforms.uOpacity.value = showHeatmap ? 0.35 : 0.0
     }
-  }, [storms, showHeatmap])
+  }, [heatmapTexture, showHeatmap])
 
   useFrame((_, delta) => {
-    if (!autoRotate) return
-    rotationRef.current += delta * 0.012
-    if (earthRef.current) earthRef.current.rotation.y = rotationRef.current
+    // Auto-rotation (kept on parent so all overlays stay in lockstep)
+    if (autoRotate) {
+      rotationRef.current += delta * 0.012
+    }
     if (atmosphereRef.current) atmosphereRef.current.rotation.y = rotationRef.current
     if (heatmapRef.current) heatmapRef.current.rotation.y = rotationRef.current
+
+    // Cross-fade earth modes
+    const targetReal = earthMode === 'line' ? 0.0 : 1.0
+    const targetLine = earthMode === 'line' ? 1.0 : 0.0
+    const step = delta / FADE_DURATION
+    realisticOpacityRef.current = approach(realisticOpacityRef.current, targetReal, step)
+    lineOpacityRef.current = approach(lineOpacityRef.current, targetLine, step)
   })
 
   return (
     <group>
-      {/* Earth sphere */}
-      <mesh ref={earthRef}>
-        <sphereGeometry args={[1.0, 64, 64]} />
-        <meshPhongMaterial
-          map={earthTexture}
-          specular={new THREE.Color(0x030303)}
-          shininess={1}
-        />
-      </mesh>
+      <Suspense fallback={null}>
+        <RealisticEarth rotationRef={rotationRef} opacityFromRef={realisticOpacityRef} />
+        <LineEarth rotationRef={rotationRef} opacityFromRef={lineOpacityRef} />
+      </Suspense>
 
-      {/* Atmosphere glow (slightly larger, BackSide) */}
       <mesh ref={atmosphereRef} material={atmosphereMaterial}>
         <sphereGeometry args={[1.025, 64, 64]} />
       </mesh>
 
-      {/* Heatmap overlay */}
       <mesh ref={heatmapRef} material={heatmapMaterial}>
         <sphereGeometry args={[1.005, 64, 64]} />
       </mesh>
 
-      {/* RainViewer radar overlay */}
       <RainRadarLayer visible={showRainRadar} rotationRef={rotationRef} />
     </group>
   )
+}
+
+function approach(current, target, step) {
+  const diff = target - current
+  if (Math.abs(diff) <= step) return target
+  return current + Math.sign(diff) * step
 }

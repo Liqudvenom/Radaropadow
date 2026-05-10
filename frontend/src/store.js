@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { initialEarthMode } from './utils/textureSet'
 
 const useStormStore = create((set, get) => ({
   // Current live snapshot
@@ -13,6 +14,11 @@ const useStormStore = create((set, get) => ({
   alerts: [],
   // Selected storm
   selectedStorm: null,
+  // Storm currently highlighted via hover/keyboard in the side panel
+  // (separate from selection so we can show a transient pulse without
+  // committing the storm card)
+  highlightedStormId: null,
+  setHighlightedStormId: (id) => set({ highlightedStormId: id }),
   // Active map layers
   layers: {
     storms: true,
@@ -25,7 +31,22 @@ const useStormStore = create((set, get) => ({
 
   // View mode: 3D globe or 2D flat map
   viewMode: 'globe',            // 'globe' | 'map2d'
-  setViewMode: (mode) => set({ viewMode: mode }),
+  setViewMode: (mode) => {
+    // Block view-mode swap while a camera fly-to is in progress;
+    // otherwise the half-finished animation gets stranded and the
+    // OrbitControls re-enable on the wrong scene.
+    if (get().cameraLocked) return
+    set({ viewMode: mode })
+  },
+
+  // Earth render style: 'realistic' (photo) or 'line' (blueprint contour)
+  earthMode: initialEarthMode,
+  setEarthMode: (mode) => set({ earthMode: mode === 'line' ? 'line' : 'realistic' }),
+
+  // True while a camera fly-to / focus animation is running.
+  // Used by OrbitControls + view-mode toggle to avoid fighting the animation.
+  cameraLocked: false,
+  setCameraLocked: (locked) => set({ cameraLocked: !!locked }),
 
   // RainViewer tile metadata
   rainviewerData: null,

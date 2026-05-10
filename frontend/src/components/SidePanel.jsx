@@ -1,12 +1,16 @@
 /**
- * SidePanel – right-hand dashboard showing:
- *   - Live connection status
- *   - Global storm statistics
- *   - Selected storm details
- *   - Active alert queue
- *   - Layer toggles
+ * SidePanel – right-hand dashboard.
+ *
+ * Live connection · global storm stats · selected storm details +
+ * classification transparency · alerts · layer toggles · earth style toggle.
+ *
+ * Two-way sync with the globe:
+ *   - Hovering a storm row pushes `highlightedStormId` into the store, which
+ *     drives a pulse on the matching marker in StormMarkers.jsx.
+ *   - When `selectedStorm` changes from elsewhere (e.g. clicking a marker
+ *     directly on the globe), the corresponding row scrolls into view.
  */
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { format } from 'date-fns'
 import useStormStore from '../store'
 import { aqiColor } from '../utils/geoUtils'
@@ -18,6 +22,15 @@ const STATUS_BADGE = {
   SEVERE:      { label: 'SEVERE',      cls: 'badge--severe' },
   DISSIPATING: { label: 'DISSIPATING', cls: 'badge--dissipating' },
 }
+
+// Classification thresholds — kept in sync with backend/services/storm_detector.
+// The numbers are documented here so the UI explains the "why" of a status.
+const CLASSIFICATION_RULES = [
+  { status: 'SEVERE',      wind: '≥ 120 km/h',  pressure: '< 970 hPa',  weatherCode: '95–99 (thunderstorm)' },
+  { status: 'ACTIVE',      wind: '80–120 km/h', pressure: '970–990 hPa', weatherCode: '80–82 (heavy rain)' },
+  { status: 'FORMING',     wind: '40–80 km/h',  pressure: '990–1000 hPa', weatherCode: '60–67 (rain)' },
+  { status: 'DISSIPATING', wind: '< 40 km/h',   pressure: '> 1000 hPa', weatherCode: 'any' },
+]
 
 function StatusBadge({ status }) {
   const cfg = STATUS_BADGE[status] ?? { label: status, cls: '' }
@@ -31,6 +44,40 @@ function WindBar({ speed }) {
     <div className="wind-bar-wrap">
       <div className="wind-bar" style={{ width: `${pct}%`, background: color }} />
       <span className="wind-bar-label">{speed} km/h</span>
+    </div>
+  )
+}
+
+function ClassificationBox({ storm }) {
+  // Surface why the storm got its current label, based on the same rules
+  // the backend used. This is the "transparency" the prompt asked for.
+  const rule = CLASSIFICATION_RULES.find((r) => r.status === storm.status)
+  if (!rule) return null
+  const sources = storm.observation_count ?? storm.cluster_sources?.length ?? null
+  return (
+    <div className="classification-box">
+      <span className="section-title section-title--sub">CLASSIFICATION</span>
+      <div className="classification-row">
+        <span className="classification-label">Triggered by</span>
+        <span className="classification-value">
+          {storm.wind_speed_kmh} km/h · {storm.pressure_hpa} hPa
+        </span>
+      </div>
+      <div className="classification-row">
+        <span className="classification-label">{storm.status} thresholds</span>
+        <span className="classification-value classification-value--mono">
+          wind {rule.wind} · p {rule.pressure}
+        </span>
+      </div>
+      {sources != null && (
+        <div className="classification-row">
+          <span className="classification-label">Cluster sources</span>
+          <span className="classification-value">{sources} obs</span>
+        </div>
+      )}
+      {storm.classification_reason && (
+        <p className="classification-reason">{storm.classification_reason}</p>
+      )}
     </div>
   )
 }
@@ -82,6 +129,8 @@ function StormCard({ storm }) {
           ⟶ Path predicted ({storm.predicted_path.length} × 3h steps)
         </p>
       )}
+
+      <ClassificationBox storm={storm} />
     </div>
   )
 }
@@ -115,11 +164,34 @@ function LayerToggle({ label, layerKey }) {
   )
 }
 
+function EarthStyleToggle() {
+  const earthMode = useStormStore((s) => s.earthMode)
+  const setEarthMode = useStormStore((s) => s.setEarthMode)
+  return (
+    <div className="earth-style-toggle">
+      <button
+        className={`layer-btn ${earthMode === 'realistic' ? 'layer-btn--on' : ''}`}
+        onClick={() => setEarthMode('realistic')}
+      >
+        Realistic
+      </button>
+      <button
+        className={`layer-btn ${earthMode === 'line' ? 'layer-btn--on' : ''}`}
+        onClick={() => setEarthMode('line')}
+      >
+        Line / Topo
+      </button>
+    </div>
+  )
+}
+
 export default function SidePanel() {
   const wsStatus = useStormStore((s) => s.wsStatus)
   const currentSnapshot = useStormStore((s) => s.currentSnapshot)
   const selectedStorm = useStormStore((s) => s.selectedStorm)
   const setSelectedStorm = useStormStore((s) => s.setSelectedStorm)
+  const highlightedStormId = useStormStore((s) => s.highlightedStormId)
+  const setHighlightedStormId = useStormStore((s) => s.setHighlightedStormId)
   const alerts = useStormStore((s) => s.alerts)
   const dismissAlert = useStormStore((s) => s.dismissAlert)
   const playbackIndex = useStormStore((s) => s.playbackIndex)
@@ -128,6 +200,7 @@ export default function SidePanel() {
   const layers = useStormStore((s) => s.layers)
 
   const [stormListOpen, setStormListOpen] = useState(false)
+  const selectedRowRef = useRef(null)
 
   const activeSnapshot = playbackIndex !== null
     ? history[Math.min(playbackIndex, history.length - 1)]
@@ -141,9 +214,15 @@ export default function SidePanel() {
     DISSIPATING: storms.filter((s) => s.status === 'DISSIPATING'),
   }
 
+  // Scroll the matching list row into view when a storm is selected from the globe
+  useEffect(() => {
+    if (selectedStorm && selectedRowRef.current) {
+      selectedRowRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [selectedStorm])
+
   return (
     <aside className="side-panel">
-      {/* Header */}
       <div className="panel-header">
         <div className="panel-logo">
           <span className="panel-logo-icon">⛈</span>
@@ -159,7 +238,6 @@ export default function SidePanel() {
         </div>
       </div>
 
-      {/* Global stats */}
       <div className="stat-grid">
         <div className="stat-box stat-box--severe">
           <span className="stat-val">{stormsByStatus.SEVERE.length}</span>
@@ -179,7 +257,11 @@ export default function SidePanel() {
         </div>
       </div>
 
-      {/* Layer controls */}
+      <div className="layer-section">
+        <span className="section-title">EARTH STYLE</span>
+        <EarthStyleToggle />
+      </div>
+
       <div className="layer-section">
         <span className="section-title">LAYERS</span>
         <div className="layer-buttons">
@@ -192,7 +274,6 @@ export default function SidePanel() {
         </div>
       </div>
 
-      {/* Selected storm detail */}
       {selectedStorm ? (
         <div className="selected-section">
           <div className="section-title-row">
@@ -214,7 +295,6 @@ export default function SidePanel() {
             </button>
           </div>
 
-          {/* Top-3 preview */}
           <div className="storm-list">
             {storms.length === 0 && (
               <p className="empty-msg">No storms detected.</p>
@@ -223,17 +303,26 @@ export default function SidePanel() {
               .slice()
               .sort((a, b) => b.intensity - a.intensity)
               .slice(0, 3)
-              .map((storm) => (
-                <button
-                  key={storm.id}
-                  className="storm-list-item"
-                  onClick={() => setSelectedStorm(storm)}
-                >
-                  <StatusBadge status={storm.status} />
-                  <span className="storm-list-region">{storm.region}</span>
-                  <span className="storm-list-wind">{storm.wind_speed_kmh} km/h</span>
-                </button>
-              ))}
+              .map((storm) => {
+                const isHighlighted = highlightedStormId === storm.id
+                const isSelected = selectedStorm?.id === storm.id
+                return (
+                  <button
+                    key={storm.id}
+                    ref={isSelected ? selectedRowRef : null}
+                    className={`storm-list-item ${isHighlighted ? 'storm-list-item--hl' : ''}`}
+                    onClick={() => setSelectedStorm(storm)}
+                    onMouseEnter={() => setHighlightedStormId(storm.id)}
+                    onMouseLeave={() => setHighlightedStormId(null)}
+                    onFocus={() => setHighlightedStormId(storm.id)}
+                    onBlur={() => setHighlightedStormId(null)}
+                  >
+                    <StatusBadge status={storm.status} />
+                    <span className="storm-list-region">{storm.region}</span>
+                    <span className="storm-list-wind">{storm.wind_speed_kmh} km/h</span>
+                  </button>
+                )
+              })}
             {storms.length > 3 && (
               <button
                 className="storm-list-more-btn"
@@ -257,7 +346,6 @@ export default function SidePanel() {
         />
       )}
 
-      {/* Air Quality section */}
       {layers.airquality && airQualityPoints.length > 0 && (
         <div className="aq-section">
           <span className="section-title">AIR QUALITY</span>
@@ -275,7 +363,6 @@ export default function SidePanel() {
         </div>
       )}
 
-      {/* Alerts */}
       {alerts.length > 0 && (
         <div className="alerts-section">
           <span className="section-title">⚠ ALERTS</span>
@@ -285,7 +372,6 @@ export default function SidePanel() {
         </div>
       )}
 
-      {/* Last update */}
       <div className="panel-footer">
         {currentSnapshot && (
           <span>

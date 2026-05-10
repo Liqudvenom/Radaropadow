@@ -129,13 +129,49 @@ sinusoidal noise — the app is fully functional without any API key.
 
 | Layer | Description |
 |-------|-------------|
-| **Storms** | Animated markers (pulsing rings, lightning flashes) |
+| **Storms** | Animated markers (pulsing rings, lightning flashes, sync-highlight from side panel) |
 | **Wind** | Instanced arrow mesh, color-coded by speed |
 | **Heatmap** | Custom GLSL fragment shader sampling a DataTexture |
 | **Paths** | Dashed line segments for predicted storm trajectories |
-| **Clouds** | Animated point particles clustered around storms |
+| **Clouds** | Animated point particles clustered around storms + separate cloud sphere in realistic mode |
 | **Atmosphere** | Fresnel-based atmospheric glow shader |
 | **Stars** | Background star field for depth |
+
+### Earth render styles
+
+The 3D globe and 2D map share a single equirectangular texture set and can be
+toggled at runtime via the **EARTH STYLE** section of the side panel.
+
+| Mode | What you see |
+|------|--------------|
+| **Realistic** | Multi-layer photo-Earth: day albedo + night lights (driven by the directional light), normal-mapped relief, ocean specular, and a separate cloud sphere drifting ~4% faster than the surface. |
+| **Line / Topo** | Blueprint look: same albedo as luminance source for the landmass mask, lat/lon graticule every 15°, and contour lines from a DEM if provided (procedural fBm fallback otherwise). |
+
+Both modes are mounted simultaneously and cross-faded over 0.6s when toggled,
+so there is no Suspense flash.
+
+### Texture pipeline
+
+By default the app pulls a CORS-friendly equirectangular set from
+`raw.githubusercontent.com/mrdoob/three.js`, so `npm run dev` shows a fully
+textured globe with no asset committed to this repo.
+
+To use your own NASA-grade textures, drop equirectangular 2:1 files into
+[`frontend/public/textures/`](frontend/public/textures/README.md) and set:
+
+```
+VITE_EARTH_TEXTURE_BASE=/textures
+```
+
+Recognized filenames: `earth_day.jpg`, `earth_night.jpg`, `earth_clouds.png`,
+`earth_normal.jpg`, `earth_specular.jpg`, `earth_dem.jpg` (optional). Missing
+layers degrade gracefully (no night → uniform dark side, no DEM → procedural
+contours, etc.). See [`frontend/.env.example`](frontend/.env.example) for full
+env reference and [`frontend/public/textures/README.md`](frontend/public/textures/README.md)
+for source recommendations.
+
+> ⚠ Hemisphere renders (e.g. orthographic shots from orbit) are **not**
+> equirectangular and will distort heavily at the poles — use 2:1 maps only.
 
 ---
 

@@ -95,7 +95,26 @@ function StormTooltip({ storm }) {
   )
 }
 
-function StormMarker({ storm, onSelect }) {
+function HighlightBeam({ color }) {
+  // Outer ring + radial beam shown when this marker is highlighted from the
+  // side panel. Visual cue that "this row over there is this dot here".
+  const ringRef = useRef()
+  useFrame(({ clock }) => {
+    if (!ringRef.current) return
+    const t = clock.getElapsedTime()
+    const s = 1 + 0.6 * Math.abs(Math.sin(t * 3))
+    ringRef.current.scale.setScalar(s)
+    ringRef.current.material.opacity = 0.55 - 0.4 * Math.abs(Math.sin(t * 3))
+  })
+  return (
+    <mesh ref={ringRef}>
+      <ringGeometry args={[0.022, 0.034, 48]} />
+      <meshBasicMaterial color={color} transparent side={THREE.DoubleSide} opacity={0.5} />
+    </mesh>
+  )
+}
+
+function StormMarker({ storm, onSelect, isHighlighted, isSelected, onHoverChange }) {
   const [hovered, setHovered] = useState(false)
 
   const [x, y, z] = latLonToVec3(storm.coordinates.lat, storm.coordinates.lon, 1.01)
@@ -155,13 +174,16 @@ function StormMarker({ storm, onSelect }) {
       {/* Lightning flash for severe */}
       {isSevere && <LightningFlash color={0xffd700} />}
 
+      {/* Highlight beam when row is hovered in side panel OR storm is selected */}
+      {(isHighlighted || isSelected) && <HighlightBeam color={color} />}
+
       {/* Predicted path */}
       {storm.predicted_path && storm.predicted_path.length > 0 && (
         <PathLine path={storm.predicted_path} color={colorHex} />
       )}
 
-      {/* Hover tooltip */}
-      {hovered && (
+      {/* Hover tooltip — shown on either pointer hover or panel highlight */}
+      {(hovered || isHighlighted) && (
         <Html
           distanceFactor={8}
           style={{ pointerEvents: 'none' }}
@@ -176,11 +198,21 @@ function StormMarker({ storm, onSelect }) {
 
 export default function StormMarkers({ storms = [] }) {
   const setSelectedStorm = useStormStore((s) => s.setSelectedStorm)
+  const highlightedStormId = useStormStore((s) => s.highlightedStormId)
+  const setHighlightedStormId = useStormStore((s) => s.setHighlightedStormId)
+  const selectedStorm = useStormStore((s) => s.selectedStorm)
 
   return (
     <group>
       {storms.map((storm) => (
-        <StormMarker key={storm.id} storm={storm} onSelect={setSelectedStorm} />
+        <StormMarker
+          key={storm.id}
+          storm={storm}
+          onSelect={setSelectedStorm}
+          isHighlighted={highlightedStormId === storm.id}
+          isSelected={selectedStorm?.id === storm.id}
+          onHoverChange={(h) => setHighlightedStormId(h ? storm.id : null)}
+        />
       ))}
     </group>
   )
